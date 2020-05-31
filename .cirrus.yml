@@ -1,6 +1,6 @@
 freebsd11_task:
         freebsd_instance:
-                image: freebsd-11-3-release-amd64
+                image_family: freebsd-11-3-snap
         install_script: pkg install -y devel/openmp devel/gmake perl5
 
         info_script:
@@ -23,7 +23,7 @@ freebsd11_task:
                 - ./john --test=0
 freebsd12_task:
         freebsd_instance:
-                image: freebsd-12-1-release-amd64
+                image_family: freebsd-12-1-snap
         install_script: pkg install -y devel/gmake wget perl5
 
         info_script:
