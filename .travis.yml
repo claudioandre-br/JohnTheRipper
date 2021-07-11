@@ -1,62 +1,236 @@
 language: c
 dist: bionic
+services: docker
 os: linux
+
+stages:
+  - stable
+  - test
+  - machine
+  - Test Suite
+  - name: package
+    if: commit_message =~ /test-package/
 
 jobs:
   include:
-
-  # #### CPU formats test (gcc)
-  - os: linux
-    compiler: gcc
-    addons:
-      apt:
-        packages: &required
-          # John the Ripper required stuff
-          - libssl-dev
-          - zlib1g-dev
-          # Extra formats and performance
-          - yasm
-          - libgmp-dev
-          - libpcap-dev
-          - pkg-config
-          - libbz2-dev
-          # OpenMP for clang
-          - libiomp-dev
-
-  # #### CPU formats test (clang)
-  - os: linux
-    compiler: clang
-    addons:
-      apt:
-        packages: *required
-
-  # #### OpenCL formats test. Use Trusty (fglrx driver)
-  - os: linux
+  #Test JtR using a stable distro (OS and compiler)
+  - env: TEST="centos7;gcc;" BUILD_OPTS="--enable-werror"
+    name: "CentOS 7 with GCC"
+    stage: stable
+  - env: TEST="ubuntu12;usual;" BUILD_OPTS="--enable-werror"
+    stage: stable
+    name: "Ubuntu 12 LTS with GCC"
+    dist: precise
+  - env: TEST="ubuntu14;usual;" BUILD_OPTS="--enable-werror"
+    stage: stable
+    name: "Ubuntu 14 LTS with GCC"
     dist: trusty
-    compiler: gcc
-    addons:
-      apt:
-        packages:
-          # John the Ripper required stuff
-          - libssl-dev
-          - zlib1g-dev
-          # Extra formats and performance
-          - yasm
-          - libgmp-dev
-          - libpcap-dev
-          - pkg-config
-          - libbz2-dev
-          # OpenMP for clang
-          - libiomp-dev
-          # OpenCL
-          - fglrx-dev
-          - opencl-headers
-    env: OPENCL="yes"
+  - env: TEST="ubuntu16;usual;" BUILD_OPTS="--enable-werror"
+    stage: stable
+    name: "Ubuntu 16 LTS with GCC"
+    dist: xenial
+  - env: TEST="ubuntu20;usual;" BUILD_OPTS="--enable-werror"
+    stage: stable
+    name: "Ubuntu 20.04 with GCC"
+    dist: focal
 
-  # #### MacOS CPU plus OpenCL formats test
+  #Test JtR using AMD OpenCL (clang)
+  - env: TEST="ubuntu14;OPENCL;usual;" BUILD_OPTS="--enable-werror --enable-simd=avx2"
+    stage: stable
+    name: "Ubuntu 14 LTS, Clang, AMD OpenCL"
+    dist: trusty
+    compiler: clang
+  ##############################################################################
+
+  # Test JtR using a "hot" OS/compiler #########################################
+  - env: TEST="fresh;ASAN;clang;"        BUILD_OPTS="--enable-ubsan --enable-simd=avx2"
+    stage: test
+  # It was fresh
+  # Ubuntu 20.10 is failing in Testing crypt, generic crypt(3) [?/64]... (2xOMP) AddressSanitizer:DEADLYSIGNAL
+  - env: TEST="usual;ASAN;gcc;slow;"     BUILD_OPTS="--enable-ubsan" FUZZ="slow"
+    stage: test
+  - env: TEST="fresh;EXTRAS;clang;"      # Remove ASAN, it is failing
+    stage: test                          # TEST="fresh;ASAN;EXTRAS;clang;"
+  - env: TEST="fresh;EXTRAS;gcc;"
+    stage: test
+  - env: TEST="experimental;"
+    stage: test
+  ##############################################################################
+
+
+  # Unusual test environment ###################################################
+  #Test OpenMP with OMP_NUM_THREADS=1
+  - env: TEST="usual;ASAN;" OMP_NUM_THREADS=1 BUILD_OPTS="--enable-werror"
+    stage: test
+
+  #Test OpenMP with OMP_NUM_THREADS=3
+  - env: TEST="usual;ASAN;" OMP_NUM_THREADS=3 BUILD_OPTS="--enable-werror --enable-simd=avx2"
+    stage: test
+
+  #Test --enable-openmp-for-fast-formats
+  - env: TEST="usual;ASAN;" BUILD_OPTS="--enable-openmp-for-fast-formats --enable-werror --enable-simd=avx2"
+    stage: test
+
+  #Test a non OpenMP build with clang
+  - env: TEST="usual;ASAN;" BUILD_OPTS="--disable-native-tests --disable-openmp --enable-werror"
+    stage: test
+    compiler: clang
+
+  #Test a non SIMD build. OMP and non OpenMP. OpenCL
+  - env: TEST="usual;ASAN;OPENCL;" BUILD_OPTS="--disable-native-tests --enable-werror CPPFLAGS='-mno-sse2 -mno-mmx -U__SSE__'" F=1
+    stage: test
+  - env: TEST="usual;ASAN;OPENCL;" BUILD_OPTS="--disable-native-tests --enable-werror CPPFLAGS='-mno-sse2 -mno-mmx -U__SSE__'" F=2
+    stage: test
+    dist: trusty
+  - env: TEST="usual;ASAN;OPENCL;" BUILD_OPTS="--disable-native-tests --disable-openmp --enable-werror CPPFLAGS='-mno-sse2 -mno-mmx -U__SSE__'" F=1
+    stage: test
+  - env: TEST="usual;ASAN;OPENCL;" BUILD_OPTS="--disable-native-tests --disable-openmp --enable-werror CPPFLAGS='-mno-sse2 -mno-mmx -U__SSE__'" F=2
+    stage: test
+    dist: trusty
+  ##############################################################################
+
+
+  # AMD64 testing ##############################################################
+  - env: TEST="usual;full;extra;crack;EXTRAS;" FUZZ="shared" BUILD_OPTS="--enable-werror"
+    stage: machine
+    arch: amd64
+
+  # Packet Arm64 (Armv8 compliant) testing #####################################
+  - env: TEST="usual;full;extra;crack;" FUZZ="shared" OMP_NUM_THREADS=2 BUILD_OPTS="--enable-werror"
+    stage: machine
+    arch: arm64
+
+  # Packet Power (PPC64LE) testing #############################################
+  - env: TEST="usual;full;extra;crack;" FUZZ="shared" BUILD_OPTS="--enable-werror"
+    stage: machine
+    arch: ppc64le
+
+  # Packet IBM (IBM System Z) testing ##########################################
+  - env: TEST="usual;full;extra;crack;" FUZZ="shared" BUILD_OPTS="--enable-werror"
+    stage: machine
+    arch: s390x
+
+  # MacOS testing ##############################################################
+  - os: osx # Requires to point SSL to Cellar folder, as seen below
+    stage: machine
+    osx_image: xcode11.6
+    env: TEST="MacOS;" OPENCL="yes" BUILD_OPTS="--enable-werror"
+
   - os: osx
-    osx_image: xcode9.4
-    env: OPENCL="yes"
+    stage: machine
+    osx_image: xcode10.3
+    env: TEST="MacOS;" OPENCL="yes"  BUILD_OPTS="OPENSSL_CFLAGS=-I/usr/local/opt/openssl@1.1/include OPENSSL_LIBS='-L/usr/local/Cellar/openssl@1.1/1.1.1d/lib -lssl -lcrypto'"
+
+  - os: osx
+    stage: machine
+    osx_image: xcode12.2
+    env: TEST="MacOS;" OPENCL="yes"
+
+  # Test Suite Testing #########################################################
+  #Test using TS - CPU formats
+  - stage: Test Suite
+    compiler: clang
+    env: TEST="TS;" BUILD_OPTS="--enable-simd=avx2"
+
+  #Test using TS - OpenCL
+  - stage: Test Suite
+    dist: trusty
+    compiler: clang
+    env: TEST="TS;OPENCL;" BUILD_OPTS="--enable-simd=avx2"
+
+  #Test --internal using TS
+  - stage: Test Suite
+    dist: trusty
+    compiler: clang
+    env: TEST="TS --internal;OPENCL;" BUILD_OPTS="--enable-simd=avx2"
+
+  #Test --restore using TS
+  #- env: TEST="TS --restore;" # WE KNOW IT IS NOT WORKING
+  ##############################################################################
+
+  # Test the Ubuntu Snap package ###############################################
+  - stage: package
+    name: "16.04 LTS snap app test"
+    dist: xenial
+    env: TEST="snap;" FUZZ="snap"
+
+  - stage: package
+    name: "18.04 LTS snap app test"
+    dist: bionic
+    env: TEST="snap;" FUZZ="snap"
+
+  - stage: package
+    name: "20.04 LTS snap app test"
+    dist: focal
+    env: TEST="snap;" FUZZ="snap"
+
+  - stage: package
+    name: "18.04 LTS snap on ARM64 app test"
+    dist: bionic
+    arch: arm64
+    env: TEST="snap;" FUZZ="snap"
+
+  #- stage: package
+  #  name: "OpenCL snap app test"
+  #  dist: focal
+  #  env: TEST="snap;OPENCL;" FUZZ="snap"
+
+  # Windows package testing ####################################################
+  - stage: package
+    name: "Windows package test"
+    os: windows
+    script:
+    # info_script:
+    - systeminfo
+
+    # check_script:
+    - wget https://github.com/openwall/john-packages/releases/download/jumbo-dev/winX64_1_JtR.7z -O win_x64.7z
+    - 7z x win_x64.7z
+    - cd JtR/run
+    - powershell "cmd /c 'john --list=build-info'"
+    - ./john.exe --test=0
+  ##############################################################################
+
+  # Flatpak package testing ####################################################
+  - stage: package
+    name: "Flatpak app test"
+    script:
+    - wget https://github.com/openwall/john-packages/releases/download/jumbo-dev/flatpak_1_JtR.zip
+    - unzip flatpak_1_JtR.zip
+    - sudo apt-get install -y flatpak
+    - sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+    - sudo flatpak install -y flathub org.freedesktop.Platform//20.08
+
+    # Install flatpak package
+    - sudo flatpak install --user -y --bundle john.flatpak
+
+    # Do some testing
+    - sudo flatpak run com.openwall.John
+    - sudo flatpak run com.openwall.John --list=build-info
+    - export TEST=';full;extra;' # Controls how the test will happen
+    - export arch=$(uname -m)
+    - export JTR_BIN='sudo flatpak run com.openwall.John'
+    - export JTR_CL='flatpak run com.openwall.John'
+
+    # Adjust the testing environment, import and run some testing
+    - wget https://raw.githubusercontent.com/claudioandre-br/JtR-CI/master/tests/run_tests.sh
+    - source run_tests.sh
+  ##############################################################################
+
+  allow_failures:
+  - env: TEST="experimental;"
+
+  fast_finish: true
 
 script:
   - .travis/travis-ci.sh
+
+  #DON'T run a test on JtR using a gcc build and OpenCL
+   # with ASAN (gcc + OpenCL + ASAN) it works
+   # regular (gcc + OpenCL build fails) build fails => (could not find module by name='fglrx')
+
+  #Test JtR using a clang build and OpenCL
+   # (clang + ASAN + OpenCL build fails)
+
+  #Test a non SIMD build. OMP and non OpenMP.
+   # Note: non OpenMP + clang build fails
